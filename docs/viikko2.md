@@ -1,1 +1,3 @@
- 
+Viikon aikana rakensin robodogen rungon, kävin läpi Lejos:n esimerkkiluokkia ja niitä vastaavia API-dokumentaatiota. Ajoin PilotParams-tiedot ja testasin robodogen liikkumista ja kääntymistä. Doge liikkui odotetusti, kunhan nopeuden sovitti riittävän alhaiseksi, ettei sutimista päässyt tapahtumaan. 
+
+Suunnitelmani jatkoa varten on testata ääni-, ultraäänisensorien sekä äänen tuottamisen esimerkkiluokat. Robodoge tarvitsee myös hätäkatkaisun. Oletan, että ongelmia saattaa tulla ääni- ja ultraäänisensoreiden tarkkuuden kanssa, mutta testaamalla nämäkin selviävät. Jatkan edellisen suunnitelman mukaan sen selvittämistä, miten äänisensorilla voidaan tunnistaa tietyn puhutun komennon rytmi ja sitä voisi käyttää puhuttujen komentojen erottamiseksi. Selvitän miten ultraäänisensorilla voidaan etsiä kohteen keskikohta tunnistamalla kohteen vasen ja oikea reuna. Selvitän kohteen etäisyyden mittauksen ultraäänisensorilla. 
