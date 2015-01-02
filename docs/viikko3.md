@@ -1,1 +1,3 @@
- 
+Tällä viikolla Robodoge oppi haukkumaan, tosin hyvin hiljaa. Ultraääninäkökin tuli alustavasti kokeiltua. Muuten aika on kulunut äänisensorin dataloggerin kanssa. Raakasignaali tallentuu tiedostoon ja olen päässyt alustavasti katsomaan miten doge kuulee. Lupaavalta näyttää.
+
+Työtä on vielä paljon jäljellä ja kaikkien ohjelmanpalasten yhdistäminen tulee viemään aikaa, tulee kiirettä. Seuraavaksi lisään äänimittauksen rinnalle aikaleiman ja pääsen tekemään signaalintunnistusta. Suunnitelman mukaan dogen pitäisi tunnistaa yksi komento "tänne" muusta puheesta. Testaan tätä muutamalla eri sanalla tai lauseella. Kunhan doge tunnistaa äänikomennon, yhdistän sen ultraäänisensorin mittauksiin ja liikkumiseen. 
