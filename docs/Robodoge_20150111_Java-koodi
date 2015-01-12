@@ -1,0 +1,1460 @@
+package DeviceLogics;
+
+import java.io.*;
+import java.util.List;
+import java.util.ArrayList;
+
+import lejos.util.*;
+
+import lejos.nxt.Button;
+import lejos.nxt.LCD;
+import lejos.nxt.SensorPort;
+import lejos.nxt.SensorPortListener;
+import lejos.nxt.SoundSensor;
+
+public class ListenVoiceCommand implements TimerListener {
+
+	private SoundSensor sound;
+	private List<Integer> soundRecord;
+	private List<Integer> soundPatterns;
+	private Timer timer;
+	private boolean timeOut;
+
+	public ListenVoiceCommand() {
+		sound = new SoundSensor(SensorPort.S1);
+		sound.setDBA(true); //set sound sensor to human adjusted value i.e. DBA true.
+		int waitingTime = 2000; // Waiting time for voice command in milliseconds (2000).
+		timer = new Timer(waitingTime,this);
+		soundRecord = new ArrayList<Integer>();
+		soundPatterns = new ArrayList<Integer>(); //to store all the voice commands in one list.
+	}
+
+
+
+	public List<Integer> runSoundRecorder()
+	{
+		soundRecord.clear(); //initialize list
+		soundPatterns.clear(); //initialize list
+		timeOut = false; // initialize timeOut clause
+		int soundLevel = 0;
+		int dbOffset = 4; //offset in dBA in addition to background noise.
+		int dbMax = dbOffset; //max loudness for sound normalization.
+		int minPause = 256; //As recorder measures only 256 times, min pause is never reached, but it's a possibility.
+		int t = 0; // time counter
+		int p = 0; // pause counter
+
+		int bgNoise = measureBGNoise();
+
+		LCD.clear();
+		LCD.drawString("Recording starts", 0, 0);
+		LCD.drawString("when minimum", 0, 1);
+		LCD.drawString("sound level is", 0, 2);
+		LCD.drawString("reached.", 0, 3);
+		LCD.drawString("Minimum", 0, 4);
+		LCD.drawString("dBA level: ", 0, 5);
+		LCD.drawInt((bgNoise+dbOffset+2), 11, 5);
+		LCD.refresh();
+
+		while(!timeOut) 
+		{ //record if min sound level is reached
+			soundLevel=sound.readValue();
+			if(soundLevel > (bgNoise + dbOffset+2)) // if exceeds min sound level
+			{
+				LCD.clear();
+				LCD.drawString("Recording", 0, 0);
+				LCD.refresh();
+				timer.start(); //starts 2 sec timer limit
+				//startTime = System.currentTimeMillis();  //used when testing frequency
+				while(t<256) //only 256 measures. Speech recognition algorithm works with 2exp(n) measures.
+				{
+					soundLevel=sound.readValue() - bgNoise; //sound level above background noise
+
+					if(soundLevel > dbMax) { dbMax = soundLevel;} //set new max loudness
+
+					//if pause is observed
+					if(soundLevel < dbOffset) 
+					{ 
+						p++; //increase pause counter
+					}
+
+					if(p == minPause) { break;}  //too long pause(s)
+
+					//Record sound and remove noise
+					if (soundLevel < dbOffset) // 0 is equal to background noise level, dbOffset is a small threshold above noise. 
+					{ //remove noise
+						soundRecord.add(0);
+					} else {
+						soundRecord.add(soundLevel);
+					}
+					try {
+						Thread.sleep(3); //measurement done every ~3ms.
+					} catch (InterruptedException e) {
+						catchHandler(e);
+					}
+					t++; //next measurement	
+				}
+				//estimatedTime = System.currentTimeMillis() - startTime; // total measurement time in milliseconds, used when testing frequency.
+			}
+		} // voice command is recorded
+
+		//*********************************
+		//** Normalize sound level steps **
+		//*********************************
+		soundPatterns.addAll(normalize(soundRecord, dbMax));
+
+		return soundPatterns;
+	} //soundRecorder method ends
+
+	private List<Integer> normalize(List<Integer> list,int dbMax) {
+		List<Integer> normList = new ArrayList<Integer>();
+		for (int i : list) {
+			normList.add(i*128/dbMax); //Normalize to dbMax sound over the record period.
+		}
+		return normList;
+	}
+
+	private int measureBGNoise() {
+		int noise = sound.readValue(); //Background noise level check	
+		return noise;
+	}
+
+
+	@Override
+	public void timedOut() {
+		timeOut = true;
+		timer.stop();
+	}
+
+	private void catchHandler(Exception ex) {  //writes error message to LCD
+		String message = ex.getMessage();
+		int j = Math.round(message.length()/16);
+		if (j > 4) { //constrain length of the message to four lines 
+			j = 4;  
+		}
+		LCD.clear();
+		LCD.drawString("Error, message:", 0, 0);
+		for(int i=0; i <= j; i++) {
+			LCD.drawString(message.substring(i, (i+1)*16), 0, i+1);
+		}
+		LCD.drawString("Press button", 0, 5);
+		LCD.drawString("to exit.", 0, 6);
+		LCD.refresh();
+		Button.waitForPress();
+		System.exit(1);
+	}
+
+}
+
+
+package DeviceLogics;
+
+import java.io.File;
+
+import lejos.nxt.Sound;
+
+public class PlaySound {
+	
+	private File f;
+	
+	public PlaySound() {
+		String hau = "ahau4.wav";
+		f = new File(hau);
+	}
+	
+	public void hau() {
+		Sound.playSample(f);
+	}
+}
+
+
+package DeviceLogics;
+
+import java.io.*;
+import java.util.List;
+import java.util.ArrayList;
+
+import lejos.util.*;
+
+import lejos.nxt.Button;
+import lejos.nxt.LCD;
+import lejos.nxt.SensorPort;
+import lejos.nxt.SensorPortListener;
+import lejos.nxt.SoundSensor;
+
+public class RecordVoiceCommand implements TimerListener {
+
+	private SoundSensor sound;
+	private File file;
+	private FileOutputStream fos;
+	private DataOutputStream dos;
+	private List<Integer> soundRecord;
+	private List<Integer> soundPatterns;
+	private Timer timer;
+	private boolean timeOut;
+	private int records;
+	private long startTime;
+	private long estimatedTime;
+
+	public RecordVoiceCommand() {
+		sound = new SoundSensor(SensorPort.S1);
+		sound.setDBA(true); //set sound sensor to human adjusted value i.e. DBA true.
+		int waitingTime = 2000; // Waiting time for voice command in milliseconds (2000).
+		timer = new Timer(waitingTime,this);
+		records = 0;
+		soundRecord = new ArrayList<Integer>();
+		soundPatterns = new ArrayList<Integer>(); //to store all the voice commands in one list.
+	}
+
+
+
+	public List<Integer> runSoundRecorder()
+	{
+		soundRecord.clear(); //initialize list
+		timeOut = false; // initialize timeOut clause
+		int soundLevel = 0;
+		int dbOffset = 4; //offset in dBA in addition to background noise.
+		int dbMax = dbOffset; //max loudness for sound normalization.
+		int minPause = 256; //As recorder measures only 256 times, min pause is never reached, but it's a possibility.
+		int t = 0; // time counter
+		int p = 0; // pause counter
+
+		int bgNoise = measureBGNoise();
+
+		LCD.clear();
+		LCD.drawString("Recording starts", 0, 0);
+		LCD.drawString("when minimum", 0, 1);
+		LCD.drawString("sound level is", 0, 2);
+		LCD.drawString("reached.", 0, 3);
+		LCD.drawString("Minimum", 0, 4);
+		LCD.drawString("dBA level: ", 0, 5);
+		LCD.drawInt((bgNoise+dbOffset+2), 11, 5);
+		LCD.refresh();
+
+		while(!timeOut) 
+		{ //record if min sound level is reached
+			soundLevel=sound.readValue();
+			if(soundLevel > (bgNoise + dbOffset+2)) // if exceeds min sound level
+			{
+				LCD.clear();
+				LCD.drawString("Recording", 0, 0);
+				LCD.refresh();
+				timer.start(); //starts 2 sec timer limit
+				//startTime = System.currentTimeMillis();  //used when testing frequency
+				while(t<256) //only 256 measures. Speech recognition algorithm works with 2exp(n) measures.
+				{
+					soundLevel=sound.readValue() - bgNoise; //sound level above background noise
+
+					if(soundLevel > dbMax) { dbMax = soundLevel;} //set new max loudness
+
+					//if pause is observed
+					if(soundLevel < dbOffset) 
+					{ 
+						p++; //increase pause counter
+					}
+
+					if(p == minPause) { break;}  //too long pause(s)
+
+					//Record sound and remove noise
+					if (soundLevel < dbOffset) // 0 is equal to background noise level, dbOffset is a small threshold above noise. 
+					{ //remove noise
+						soundRecord.add(0);
+					} else {
+						soundRecord.add(soundLevel);
+					}
+					try {
+						Thread.sleep(3); //measurement done every ~3ms.
+					} catch (InterruptedException e) {
+						catchHandler(e);
+					}
+					t++; //next measurement	
+				}
+				//estimatedTime = System.currentTimeMillis() - startTime; // total measurement time in milliseconds, used when testing frequency.
+			}
+		} // voice command is recorded
+
+		//*********************************
+		//** Normalize sound level steps **
+		//*********************************
+		// int time = (int) estimatedTime; for frequency testing
+		soundPatterns.addAll(normalize(soundRecord, dbMax));
+		//LCD.clear();
+		//LCD.drawString("New sound", 0, 0);
+		//LCD.drawString("recorded", 0, 1);
+		//LCD.refresh();
+		//try {
+		//	Thread.sleep(500); 
+		//} catch (InterruptedException e) {
+		//	 catchHandler(e);
+		//}
+		return soundPatterns;
+	} //soundRecorder method ends
+
+	private List<Integer> normalize(List<Integer> list,int dbMax) {
+		// private List<Integer> normalize(List<Integer> list,int dbMax, int time) {
+		List<Integer> normList = new ArrayList<Integer>();
+		//normList.add(time); //add measurement time as a first value to calculate true record frequency (=measurements/time interval).
+		//Test result: frequency with these parameters is 333 Hz (=256 measurements / 3ms * 256 measurements).
+		for (int i : list) {
+			normList.add(i*128/dbMax); //Normalize to dbMax sound over the record period.
+		}
+		return normList;
+	}
+
+	private int measureBGNoise() {
+		LCD.clear();
+		LCD.drawString("measuring", 0, 0);
+		LCD.drawString("background", 0, 1);
+		LCD.drawString("noise", 0, 2);
+		LCD.refresh();
+		int noise = sound.readValue(); //Background noise level check
+		try {
+			Thread.sleep(500); 
+		} catch (InterruptedException e) {
+			catchHandler(e);
+		}
+		return noise;
+	}
+
+
+	@Override
+	public void timedOut() {
+		timeOut = true;
+		timer.stop();
+	}
+
+	private void catchHandler(Exception ex) {  //writes error message to LCD
+		String message = ex.getMessage();
+		int j = Math.round(message.length()/16);
+		if (j > 4) { //constrain length of the message to four lines 
+			j = 4;  
+		}
+		LCD.clear();
+		LCD.drawString("Error, message:", 0, 0);
+		for(int i=0; i <= j; i++) {
+			LCD.drawString(message.substring(i, (i+1)*16), 0, i+1);
+		}
+		LCD.drawString("Press button", 0, 5);
+		LCD.drawString("to exit.", 0, 6);
+		LCD.refresh();
+		Button.waitForPress();
+		System.exit(1);
+	}
+
+}
+
+
+package dogiPackage;
+
+import java.util.ArrayList;
+import java.util.Iterator;
+import java.util.List;
+
+public class Converter {
+
+	//Gets a list of raw voice commands (int) with a length of a sampleSize.
+	//Converts int values to float and store each command to an array.
+	//store command arrays to a list, which is returned.
+	public List<float[]> intToFloatList(List<Integer> list, int sampleSize) {
+		List<float[]> returnList;
+		returnList = new ArrayList<float[]>();
+		float[] fArray = new float[sampleSize]; //float array
+		float f;
+		int i = 0;
+		int j = 0;
+		for (Iterator<Integer> it = list.iterator(); it.hasNext();) {
+			i++;
+			j++;
+			f = (float) it.next();
+			fArray[(j-1)] = f;
+			if (i % (sampleSize) == 0) { //sample measurement size achieved
+				float[] copyArray = new float[sampleSize]; //float array
+				System.arraycopy(fArray, 0, copyArray, 0, fArray.length);
+				returnList.add(copyArray);
+				j = 0; //reset counter for writing fArrays
+			}
+		}
+		return returnList;
+	}
+
+	//this can be used to convert one sound record to float array and ready to signal processing
+	public float[] intToFloat(List<Integer> list, int sampleSize) {
+		float[] returnArray = new float[sampleSize]; //float array
+		if (sampleSize == list.size()) {
+			float f;
+			int j = 0;
+			for (Iterator<Integer> it = list.iterator(); it.hasNext();) {
+				j++;
+				f = (float) it.next();
+				returnArray[(j - 1)] = f;
+
+			}
+		}
+		return returnArray;
+	}
+
+}
+
+
+package dogiPackage;
+
+import java.util.List;
+
+public class MSE {
+
+	public double[] calcMSE(double[] ref, List<double[]> MFCCs) {
+		//ref is the reference voice command's MFCC fingerprint.
+		//MFCCs are the voice commands, which are compared against reference command.
+		// comparison done using mean squared error.
+		//method return MSE of each comparable voice command
+		//method assumes MFCCs and ref coefficient arrays are lenght of 11.
+
+		int noCommands = MFCCs.size(); //number of  voice commands is in the list
+
+		double[] retMSE = new double[noCommands]; //this is the mean squared error of the MSCCs
+		if (noCommands > 0) {
+			for (int i = 0; i < noCommands; i++) {   //loop through comparable commands
+				double sum = 0.0;
+				for (int j = 0; j < 11; j++) {
+					double diff = MFCCs.get(i)[j] - ref[j]; //difference between MFC coefficients
+					sum += diff * diff; //squared sum
+				}
+				retMSE[i] = sum; //store MSE of i:th command
+			}
+
+		} else {
+			return null;
+		}
+		return retMSE;
+	}
+
+	public int closestMatch(double[] MSEs) {
+		int min = 0;
+		for (int i = 1; i < MSEs.length; i++) {
+			if (MSEs[i] < MSEs[min]) {
+				min = i;
+			}
+		}
+		return min; //index of smallest Mean Squared Error
+	}
+}
+
+
+
+package dogiPackage;
+
+import java.util.List;
+import DeviceLogics.RecordVoiceCommand;
+import DeviceLogics.ListenVoiceCommand;
+import DeviceLogics.PlaySound;
+import lejos.nxt.*;
+
+/**
+ * Robodoge Project with an ant build file
+ *
+ */
+public class RoboDoge {
+
+	private static List<Integer> soundPatterns;
+	private static SpeechRecognition speech;
+	private static RecordVoiceCommand rec;
+	private static ListenVoiceCommand listen;
+
+	public static void main(String[] args) {
+		Button.ESCAPE.addButtonListener(new SafeButtonListener());  // Escape = safe button
+		welcome();
+		Button.waitForPress();
+		speech = new SpeechRecognition();
+
+		try {
+			Thread.sleep(3000); 
+		} catch (InterruptedException e) {
+		}
+		if (Button.RIGHT.isPressed()) { 
+			rec = new RecordVoiceCommand();
+			recordSamples(); //this records and saves it to a file and then exits.
+		} else { //RIGHT button not pressed --> start commanding Robodoge. 
+			listen = new ListenVoiceCommand();
+			robodoge();
+		}
+	}
+
+
+
+	private static void welcome() {
+		LCD.clear(); //print instructions
+		LCD.drawString("    RoboDoge    ", 0, 0);
+		LCD.drawString("----------------", 0, 1);
+		LCD.drawString("Press enter,then", 0, 2);
+		LCD.drawString("RIGHT for 3 sec", 0, 3);
+		LCD.drawString("to record voice", 0, 4);
+		LCD.drawString("Press enter to ", 0, 5);
+		LCD.drawString("play with Doge", 0, 6 );
+		LCD.drawString("ESC to stop", 0, 7);
+		LCD.refresh();
+	}
+
+	private static void recAnother() {
+		LCD.clear();
+		LCD.drawString("Successful!", 0, 0);
+		LCD.drawString("Record another?", 0, 2);
+		LCD.drawString("Press Right", 0, 3);
+		LCD.drawString("within 3 sec", 0, 4);
+		LCD.drawString("Free mem: ", 0, 6);
+		LCD.drawInt((int)(Runtime.getRuntime().freeMemory()),0,7);  //shows free memory on LCD screen
+		LCD.refresh();
+	}
+
+	private static void goodbye() {
+		LCD.clear();
+		LCD.drawString("Goodbye!", 0, 0);
+		LCD.refresh();
+		try {
+			Thread.sleep(1000); 
+		} catch (InterruptedException e) {
+		}
+		System.exit(1); //end
+	}
+
+	private static void recordSamples() {
+		while(true) { //to listen and save sample commands
+			soundPatterns = rec.runSoundRecorder(); //start sound recording
+			recAnother(); // display instructions
+			try {
+				Thread.sleep(3000); 
+			} catch (InterruptedException e) {
+			}
+			if (!Button.RIGHT.isPressed()) {
+				speech.saveSamples(soundPatterns);
+				goodbye();
+				//break;
+			}
+		}
+	}
+
+	private static void robodoge() {
+		speech.loadCommands(); //loads voice command IDs from a specific file <"commandIDs.txt">
+		while(true) { //to play with Robodoge
+			soundPatterns = listen.runSoundRecorder(); //start listening and sound recording
+			int command = speech.recognize(soundPatterns); //recognizes command and return index of the command
+			handleCommand(command);
+		}
+
+	}
+
+	private static void handleCommand(int command) {
+		if (command == 1) {
+			//do command 1
+			com1();
+		} else if (command == 2) {
+			//do command  2
+			com2();
+		} else if (command == 3) {
+			//do command  3
+			com3();
+		} else if (command == 4) {
+			//do command  4
+			com4();
+		} else if (command == 5) {
+			//do command  5
+			com5();
+		} else if (command == 6) {
+			//do command  6
+			com6();
+		} else if (command == 7) {
+			//do command  7
+			com7();
+		} else {
+			//doge // no command recognized. Find your own way, Robodoge!
+			doge();
+		}
+	}
+
+	private static void doge() {
+		LCD.clear();
+		LCD.drawString("Doge - wow", 0, 0);
+		LCD.refresh();
+		PlaySound play = new PlaySound();
+		play.hau(); //Doge barks
+		try {
+			Thread.sleep(2000); 
+		} catch (InterruptedException e) {
+		}
+	}
+
+	private static void com1() {
+		LCD.clear();
+		LCD.drawString("1", 0, 0);
+		LCD.refresh();
+		try {
+			Thread.sleep(2000); 
+		} catch (InterruptedException e) {
+		}
+	}
+
+	private static void com2() {
+		LCD.clear();
+		LCD.drawString("22", 0, 0);
+		LCD.refresh();
+		try {
+			Thread.sleep(2000); 
+		} catch (InterruptedException e) {
+		}
+	}
+
+	private static void com3() {
+		LCD.clear();
+		LCD.drawString("333", 0, 0);
+		LCD.refresh();
+		try {
+			Thread.sleep(2000); 
+		} catch (InterruptedException e) {
+		}
+	}
+
+	private static void com4() {
+		LCD.clear();
+		LCD.drawString("4444", 0, 0);
+		LCD.refresh();
+		try {
+			Thread.sleep(2000); 
+		} catch (InterruptedException e) {
+		}
+	}
+
+	private static void com5() {
+		LCD.clear();
+		LCD.drawString("55555", 0, 0);
+		LCD.refresh();
+		try {
+			Thread.sleep(2000); 
+		} catch (InterruptedException e) {
+		}
+	}
+
+	private static void com6() {
+		LCD.clear();
+		LCD.drawString("666666", 0, 0);
+		LCD.refresh();
+		try {
+			Thread.sleep(2000); 
+		} catch (InterruptedException e) {
+		}
+	}
+
+	private static void com7() {
+		//end
+		LCD.clear();
+		LCD.drawString("7777777", 0, 0);
+		LCD.refresh();
+		try {
+			Thread.sleep(2000); 
+		} catch (InterruptedException e) {
+		}
+	}
+
+
+
+}
+
+
+package dogiPackage;
+
+import DeviceLogics.RecordVoiceCommand;
+import lejos.nxt.Button;
+import lejos.nxt.ButtonListener;
+import lejos.nxt.LCD;
+
+public class SafeButtonListener implements ButtonListener {
+
+	@Override
+	public void buttonPressed(Button b) {
+		LCD.clear();
+		LCD.drawString("Goodbye!", 0, 0);
+		LCD.refresh();
+		try {
+			Thread.sleep(1000); 
+		} catch (InterruptedException e) {
+		}
+		System.exit(0); //stops program 
+
+	}
+
+	@Override
+	public void buttonReleased(Button b) {
+		// TODO Auto-generated method stub
+
+	}
+
+}
+
+
+package dogiPackage;
+
+import MFCC.MFCC;
+import IOLogics.FileReader;
+import IOLogics.FileWriter;
+import java.io.File;
+import java.util.List;
+import java.util.ArrayList;
+
+import lejos.nxt.Button;
+import lejos.nxt.LCD;
+
+public class SpeechRecognition {
+
+	private int sampleSize;
+	private int noCommands;
+	private double maxError;
+	private List<double[]> commandIDs;
+	private MFCC sigPros;
+
+	public SpeechRecognition() {
+		sampleSize = 256;
+		//Maximum error treshold for the sound recognition.
+		//If error is higher than maxError, then recorded soundpattern
+		//is judged not to match any command.
+		//Purpose is to decrease the amount of false commands.
+		maxError = 100.0;
+	}
+
+	private void initSigPros() {
+		int samplePerFrame = 10; //typical value
+		int samplingRate = 333; //333Hz = measurements (256) / time interval of measurements. Time interval = 3ms * 256 measurements = 768 ms.
+		int numCepstra = 26; //typical value
+		sigPros = new MFCC(samplePerFrame, samplingRate, numCepstra);
+	}
+
+	public void loadCommands() {
+		File file = new File("commandIDs.txt");
+		//check if it exists
+		if (!file.exists()) {
+			LCD.clear();
+			LCD.drawString("No command", 0, 0);
+			LCD.drawString("file created.", 0, 1);
+			LCD.drawString("Record and save.", 0, 2);
+			LCD.drawString("one first.", 0, 3);
+			LCD.drawString("Press button", 0, 4);
+			LCD.drawString("to exit.", 0, 5);
+			LCD.refresh();
+			Button.waitForPress();
+			System.exit(1); //end
+		} else {
+			FileReader fileReader = new FileReader();
+			fileReader.OpenNXTFile(file);
+			commandIDs = fileReader.readIDFile();
+			noCommands = commandIDs.size(); // number of commands
+		}
+	}
+
+	public int recognize(List<Integer> soundPattern) {
+		//1. Convert soundPattern to float[]
+		Converter converter = new Converter();
+		float[] patternArray = new float[sampleSize];
+		patternArray = converter.intToFloat(soundPattern, sampleSize); // SoundPattern converted to float array
+		//2. Signal processing = finding ID for the soundpattern
+		initSigPros();
+		double soundID[] = new double[11]; //for storing 11 MFC coefficients 2-12 = signal ID
+		soundID = sigPros.doMFCC(patternArray); // signal processesing returning ID for the sound.
+		//3. Compare soundID to command IDs'
+		MSE mse = new MSE();
+		double[] errors = new double[noCommands]; //error array for Mean Squared Errors for each command
+		errors = mse.calcMSE(soundID, commandIDs); // comparison of sound ID to command IDs using MSE.
+		//4. Find closest match
+		int closest = mse.closestMatch(errors);
+		//5. Check that command is good enough match, i.e. maxError is not exceeded to decrease the amount of false commands.
+		double minError = errors[closest]; //error value
+		if (minError > maxError) {
+			return -1; //no match found as error to all commands is too high.
+		} else {
+			return closest;  //return index of closest match command. 
+		}
+	}
+
+	public void saveSamples(List<Integer> soundPattern) {
+		//1. Convert SoundPattern sample(s) to list of float arrays.
+		Converter converter = new Converter();
+		List<float[]> allSamples;
+		allSamples = converter.intToFloatList(soundPattern, 256);
+		//2. Signal processing = finding ID for each of sample soundpattern
+		initSigPros();
+		List<double[]> allIDs = new ArrayList<double[]>(); //for storing all samples IDs, i.e. 11 MFC coefficients for each sample.
+		double mfcc[]; //MFC coefficients 1-12 = sample ID.
+		double copyArray[];    
+		for (float oneSample[] : allSamples) { //loop through all voice command samples
+			mfcc = sigPros.doMFCC(oneSample); // put them through signal processesing and get 11 MFC coefficients 2-12 as IDs for each command
+			copyArray = new double[11];
+			System.arraycopy(mfcc, 0, copyArray, 0, mfcc.length);
+			allIDs.add(copyArray); //store sample IDs to arrayList.
+		}
+		//3. Save voice command IDs to a file <SampleIDs.txt> in NXT
+		FileWriter fileWrite = new FileWriter();
+		fileWrite.WriteToNXTFile("SampleIDs.txt");
+		fileWrite.writeArrayList(allIDs);
+	}
+}
+
+
+package IOLogics;
+
+import java.io.BufferedInputStream;
+import java.io.DataInputStream;
+import java.io.File;
+import java.io.FileInputStream;
+import java.io.FileNotFoundException;
+import java.io.IOException;
+import java.util.ArrayList;
+import java.util.List;
+
+public class FileReader {
+
+	private FileInputStream fis;
+	private BufferedInputStream bis;
+	private DataInputStream dis;
+	private File file;
+
+	public void OpenFile(String fileName) {
+		//e.g. IDlog.txt
+		file = new File(fileName);
+	}
+
+	public void OpenNXTFile(File f) {
+		file = f;
+	}
+
+
+
+	//this can be used to read voice command IDs, i.e. their 11 MFC coefficients. 
+	//Returns a list of arrays containing command IDs.
+	//List of IDs can used to compare new voice records to IDs.
+	public List<double[]> readIDFile() {
+		List<double[]> returnList = new ArrayList<double[]>(); //list ot be returned
+		List<Double> dList = new ArrayList<Double>();  //all coefficients are read into one list
+		dList = readDouble(); //read saved file
+		//split dList to voice commands and store them as separate arrays to a list
+		double commandID[] = new double[11];
+		int j = 0;
+		int k = 0;
+		for (int i = 0; i < dList.size(); i++) {
+			j++;
+			k++;
+			commandID[j-1] = dList.get(i);
+			if (k % 11 == 0) { //number of coefficients in one voice command is 11, which make the ID.
+				double copyArray[] = new double[11];
+				System.arraycopy(commandID, 0, copyArray, 0, commandID.length);
+				returnList.add(copyArray);
+				j = 0; //reset counter for writing commandID arrays
+			}
+		}
+		return returnList;
+	}
+
+	private List<Double> readDouble() {
+		//this can be used to to read voice command IDs, 11 coefficients in one command.
+		//Coefficients are stored as Double.
+		ArrayList<Double> ReturnList = new ArrayList<Double>();
+		openStreams();
+		String tmp;
+		double d;
+		try {
+			while ((tmp = dis.readLine()) != null) {
+				d = Double.parseDouble(tmp);
+				ReturnList.add(d);
+			}
+		} catch (IOException ex) {
+		}
+		closeStreams();
+		return ReturnList;
+	}
+
+	//this can be used to read soundPattern file
+	public List<Integer> readInt() {
+		ArrayList<Integer> ReturnList = new ArrayList<Integer>();
+		openStreams();
+		String tmp;
+		int i;
+		try {
+			while ((tmp = dis.readLine()) != null) {
+				i = Integer.parseInt(tmp);
+				ReturnList.add(i);
+			}
+		} catch (IOException ex) {
+		}
+		closeStreams();
+		return ReturnList;
+	}
+
+	private void openStreams() {
+		try {
+			fis = new FileInputStream(file);
+		} catch (FileNotFoundException e) {
+		}
+		bis = new BufferedInputStream(fis);
+		dis = new DataInputStream(bis);
+	}
+
+	private void closeStreams() {
+		try {
+			dis.close();
+			bis.close();
+			fis.close();
+		} catch (IOException exc) {
+		}
+	}
+
+}
+
+
+
+package IOLogics;
+
+import java.io.DataOutputStream;
+import java.io.File;
+import java.io.FileNotFoundException;
+import java.io.FileOutputStream;
+import java.io.IOException;
+import java.util.List;
+
+public class FileWriter {
+
+	private FileOutputStream fos;
+	private DataOutputStream dos;
+	private File file;
+
+	public void WriteToFile(String pathFileName) {
+		//e.g. IDlog.txt
+		file = new File(pathFileName);
+	}
+
+	public void WriteToNXTFile(String FileName) {
+		//e.g. IDlog.txt
+		file = new File(FileName);
+	}
+
+	private void openStreams() {
+		try {
+			fos = new FileOutputStream(file);
+		} catch (FileNotFoundException e) {
+		}
+		dos = new DataOutputStream(fos);
+	}
+
+	private void closeStreams() {
+		try {
+			dos.close();
+			fos.close();
+		} catch (IOException e) {
+		}
+	}
+
+	//this can be used to write list of MFC coefficient arrays
+	//i.e. voice command IDs
+	public void writeArrayList(List<double[]> list) {
+		int i = list.size(); //count of voice commands
+		int k = 0;
+		double[] oneArray = new double[i * 11];
+		for (double[] dArray : list) {
+			for (int j = 0; j < dArray.length; j++) {
+				k++;
+				oneArray[k - 1] = dArray[j];
+			}
+		}
+		writeDArray(oneArray);
+	}
+
+	public void writeDArray(double[] dArray) {
+		openStreams();
+		for (int i = 0; i < dArray.length; i++) {
+			writeObject(dArray[i]);
+			try {
+				dos.write(13);
+			} catch (IOException e) {
+			}
+		}
+		closeStreams();
+	}
+
+	public void writeDList(List<Double> list) {
+		openStreams();
+		for (int i = 0; i < list.size(); i++) {
+			if (list.get(i) != null) {
+				writeObject(list.get(i));
+				try {
+					dos.write(13);
+				} catch (IOException e) {
+				}
+			}
+		}
+		closeStreams();
+	}
+
+	//this can be used to write SoundPattern list to a file
+	public void writeInt(List<Integer> list) {
+		openStreams();
+		for (int i = 0; i < list.size(); i++) {
+			if (list.get(i) != null) {
+				writeObject(list.get(i));
+				try {
+					dos.write(13);
+				} catch (IOException e) {
+				}
+			}
+		}
+		closeStreams();
+	}
+
+	private void writeObject(Object o) {
+		String temp = o.toString();
+		char current;
+		int k;
+		for (int i = 0; i < temp.length(); i++) {
+			current = temp.charAt(i);
+			k = current;
+			try {
+				dos.write(k);
+			} catch (IOException e) {
+			}
+		}
+	}
+
+}
+
+
+
+
+package MFCC;
+/*
+  Please feel free to use/modify this class.
+  If you give me credit by keeping this information or
+  by sending me an email before using it or by reporting bugs , i will be happy.
+  Email : gtiwari333@gmail.com,
+  Blog : http://ganeshtiwaridotcomdotnp.blogspot.com/
+ */
+
+/**
+ * performs Inverser Fourier Transform <br>
+ * we used Dct because there is only real coeffs
+ *
+ * @author Ganesh Tiwari
+ */
+public class DCT {
+
+	/**
+	 * number of mfcc coeffs
+	 */
+
+	int numCepstra;
+	/**
+	 * number of Mel Filters
+	 */
+	int M;
+
+	/**
+	 * @param numCepstra
+	 * @param M
+	 * number of Mel Filters
+	 * 
+	 */
+	public DCT(int numCepstra, int M) {
+		this.numCepstra = numCepstra;
+		this.M = M;
+	}
+
+	public double[] performDCT(double y[]) {
+		double cepc[] = new double[numCepstra];
+		// perform DCT
+		for (int n = 1; n <= numCepstra; n++) {
+			for (int i = 1; i <= M; i++) {
+				cepc[n - 1] += y[i - 1] * Math.cos(Math.PI * (n - 1) / M * (i - 0.5));
+			}
+		}
+		return cepc;
+	}
+}
+
+
+package MFCC;
+
+/*
+OC Volume - Java Speech Recognition Engine
+Copyright (c) 2002-2004, OrangeCow organization
+All rights reserved.
+
+Redistribution and use in source and binary forms,
+with or without modification, are permitted provided
+that the following conditions are met:
+
+ * Redistributions of source code must retain the
+above copyright notice, this list of conditions
+and the following disclaimer.
+ * Redistributions in binary form must reproduce the
+above copyright notice, this list of conditions
+and the following disclaimer in the documentation
+and/or other materials provided with the
+distribution.
+ * Neither the name of the OrangeCow organization
+nor the names of its contributors may be used to
+endorse or promote products derived from this
+software without specific prior written
+permission.
+
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS
+AND CONTRIBUTORS "AS IS" AND ANY EXPRESS OR IMPLIED
+WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS
+FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO
+EVENT SHALL THE COPYRIGHT OWNER OR CONTRIBUTORS BE
+LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
+SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
+(INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
+SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA,
+OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
+CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
+CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING
+NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF
+THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
+POSSIBILITY OF SUCH DAMAGE.
+
+Contact information:
+Please visit http://ocvolume.sourceforge.net.
+ */
+
+/**
+ * last updated on June 15, 2002<br>
+ * <b>description:</b> FFT class for real signals. Upon entry, N contains the
+ * numbers of points in the DFT, real[] and imaginary[] contain the real and
+ * imaginary parts of the input. Upon return, real[] and imaginary[] contain the
+ * DFT output. All signals run from 0 to N - 1<br>
+ * <b>input:</b> speech signal<br>
+ * <b>output:</b> real and imaginary part of DFT output
+ *
+ * @author Danny Su
+ */
+public class FFT {
+
+	/**
+	 * number of points
+	 */
+	protected int numPoints;
+	/**
+	 * real part
+	 */
+	public float real[];
+	/**
+	 * imaginary part
+	 */
+	public float imag[];
+
+	/**
+	 * performs Fast Fourier Transformation<br>
+	 *
+	 * @param signal
+	 */
+	public void computeFFT(float signal[]) {
+		numPoints = signal.length;
+		// initialize real & imag array
+		real = new float[numPoints];
+		imag = new float[numPoints];
+		// move the N point signal into the real part of the complex DFT's time
+		// domain
+		real = signal;
+		// set all of the samples in the imaginary part to zero
+		for (int i = 0; i < imag.length; i++) {
+			imag[i] = 0;
+		}
+		// perform FFT using the real & imag array
+		FFT();
+	}
+
+	/**
+	 * performs Fast Fourier Transformation<br>
+	 */
+	private void FFT() {
+		if (numPoints == 1) { return; }
+		final double pi = Math.PI;
+		final int numStages = (int) (Math.log(numPoints) / Math.log(2));
+		int halfNumPoints = numPoints >> 1;
+		int j = halfNumPoints;
+		// FFT time domain decomposition carried out by "bit reversal sorting"
+		// algorithm
+		int k;
+		for (int i = 1; i < numPoints - 2; i++) {
+			if (i < j) {
+				// swap
+				float tempReal = real[j];
+				float tempImag = imag[j];
+				real[j] = real[i];
+				imag[j] = imag[i];
+				real[i] = tempReal;
+				imag[i] = tempImag;
+			}
+			k = halfNumPoints;
+			while (k <= j) {
+				j -= k;
+				k >>= 1;
+			}
+			j += k;
+		}
+
+		// loop for each stage
+		for (int stage = 1; stage <= numStages; stage++) {
+			int LE = 1;
+			for (int i = 0; i < stage; i++) {
+				LE <<= 1;
+			}
+			int LE2 = LE >> 1;
+				double UR = 1;
+				double UI = 0;
+				// calculate sine & cosine values
+				double SR = Math.cos(pi / LE2);
+				double SI = -Math.sin(pi / LE2);
+				// loop for each sub DFT
+				for (int subDFT = 1; subDFT <= LE2; subDFT++) {
+					// loop for each butterfly
+					for (int butterfly = subDFT - 1; butterfly <= numPoints - 1; butterfly += LE) {
+						int ip = butterfly + LE2;
+						// butterfly calculation
+						float tempReal = (float) (real[ip] * UR - imag[ip] * UI);
+						float tempImag = (float) (real[ip] * UI + imag[ip] * UR);
+						real[ip] = real[butterfly] - tempReal;
+						imag[ip] = imag[butterfly] - tempImag;
+						real[butterfly] += tempReal;
+						imag[butterfly] += tempImag;
+					}
+
+					double tempUR = UR;
+					UR = tempUR * SR - UI * SI;
+					UI = tempUR * SI + UI * SR;
+				}
+		}
+	}
+}
+
+
+package MFCC;
+
+/*
+  Please feel free to use/modify this class.
+  If you give me credit by keeping this information or
+  by sending me an email before using it or by reporting bugs , i will be happy.
+  Email : gtiwari333@gmail.com,
+  Blog : http://ganeshtiwaridotcomdotnp.blogspot.com/
+ */
+
+/**
+ *
+ * @author Ganesh Tiwari, ohjpitka
+ *
+ */
+public class MFCC {
+
+	private int numMelFilters = 30;// how much
+	private int numCepstra;// number of mfcc coeffs
+	private final double preEmphasisAlpha;
+	private double lowerFilterFreq = 80.00;// FmelLow
+	private double samplingRate;
+	private double upperFilterFreq;
+	private double bin[];
+	private int samplePerFrame;
+	// /////
+	FFT fft;
+	DCT dct;
+
+	public MFCC(int samplePerFrame, int samplingRate, int numCepstra) {
+		this.preEmphasisAlpha = 0.95;
+		this.samplePerFrame = samplePerFrame;
+		this.samplingRate = samplingRate;
+		this.numCepstra = numCepstra;
+		upperFilterFreq = samplingRate / 2.0;
+		fft = new FFT();
+		dct = new DCT(this.numCepstra, numMelFilters);
+	}
+
+	public double[] doMFCC(float[] inputSignal) { //input as an float array
+		//step 1. Pre-emphasis
+		float[] preEmphasizedSignal = preEmphasis(inputSignal);    
+		//step 2. Framing
+		// Magnitude Spectrum
+		bin = magnitudeSpectrum(preEmphasizedSignal);
+
+		/*
+		 * cbin=frequencies of the channels in terms of FFT bin indices (cbin[i]
+		 * for the i -th channel)
+		 */
+		//step 3. calculate periodogram estimates of the power spectrum
+		// prepare filter for for melFilter
+		int cbin[] = fftBinIndices();// same for all
+
+		//step 4. Apply the mel filterbank to the power spectra, sum the energy in each filter
+		// process Mel Filterbank
+		double fbank[] = melFilter(bin, cbin);
+		// magnitudeSpectrum and bin filter indices
+
+		// System.out.println("after mel filter");
+		// ArrayWriter.printDoubleArrayToConole(fbank);
+
+		//step 5. Take the logarithm of all filterbank energies.
+		// Non-linear transformation
+		double f[] = nonLinearTransformation(fbank);
+		// System.out.println("after N L T");
+		// ArrayWriter.printDoubleArrayToConole(f);
+
+		// step 6. Take the Discrete Cosine Transform (DCT) of the log filterbank energies.
+		// Cepstral coefficients, by DCT
+		double cepc[] = dct.performDCT(f);
+		// System.out.println("after DCT");
+		// ArrayWriter.printDoubleArrayToConole(cepc);
+		double retCoef[] = getCoefficients(cepc);
+		return retCoef;
+	}
+
+	private double[] getCoefficients(double coef[]) {
+		double[] returnCoef = new double[11];
+		System.arraycopy(coef, 1, returnCoef, 0, 11);
+		return returnCoef;
+	}
+
+	private double[] magnitudeSpectrum(float frame[]) {
+		double magSpectrum[] = new double[frame.length];
+		// calculate FFT for current frame
+		fft.computeFFT(frame);
+		// System.err.println("FFT SUCCEED");
+		// calculate magnitude spectrum
+		for (int k = 0; k < frame.length; k++) {
+			magSpectrum[k] = Math.sqrt(fft.real[k] * fft.real[k] + fft.imag[k] * fft.imag[k]);
+		}
+		return magSpectrum;
+	}
+
+	/**
+	 * emphasize high freq signal
+	 *
+	 * @param inputSignal
+	 * @return
+	 */
+	private float[] preEmphasis(float inputSignal[]) {
+		// System.err.println(" inside pre Emphasis");
+		float outputSignal[] = new float[inputSignal.length];
+		// apply pre-emphasis to each sample
+		for (int n = 1; n < inputSignal.length; n++) {
+			outputSignal[n] = (float) (inputSignal[n] - preEmphasisAlpha * inputSignal[n - 1]);
+		}
+		return outputSignal;
+	}
+
+	private int[] fftBinIndices() {
+		int cbin[] = new int[numMelFilters + 2];
+		cbin[0] = (int) Math.round(lowerFilterFreq / samplingRate * samplePerFrame);// cbin0
+		cbin[cbin.length - 1] = (samplePerFrame / 2);// cbin24
+		for (int i = 1; i <= numMelFilters; i++) {// from cbin1 to cbin23
+			double fc = centerFreq(i);// center freq for i th filter
+			cbin[i] = (int) Math.round(fc / samplingRate * samplePerFrame);
+		}
+		return cbin;
+	}
+
+	/**
+	 * performs mel filter operation
+	 *
+	 * @param bin
+	 *            magnitude spectrum (| |)^2 of fft
+	 * @param cbin
+	 *            mel filter coeffs
+	 * @return mel filtered coeffs--> filter bank coefficients.
+	 */
+	private double[] melFilter(double bin[], int cbin[]) {
+		double temp[] = new double[numMelFilters + 2];
+		for (int k = 1; k <= numMelFilters; k++) {
+			double num1 = 0.0, num2 = 0.0;
+			for (int i = cbin[k - 1]; i <= cbin[k]; i++) {
+				// System.out.println("Inside filter loop");
+				num1 += ((i - cbin[k - 1] + 1) / (cbin[k] - cbin[k - 1] + 1)) * bin[i];
+			}
+
+			for (int i = cbin[k] + 1; i <= cbin[k + 1]; i++) {
+				// System.out.println("Inside filter loop 222222");
+				num2 += (1 - ((i - cbin[k]) / (cbin[k + 1] - cbin[k] + 1))) * bin[i];
+			}
+
+			temp[k] = num1 + num2;
+		}
+		double fbank[] = new double[numMelFilters];
+		for (int i = 0; i < numMelFilters; i++) {
+			fbank[i] = temp[i + 1];
+			// System.out.println(fbank[i]);
+		}
+		return fbank;
+	}
+
+	/**
+	 * performs nonlinear transformation
+	 *
+	 * @param fbank
+	 * @return f log of filter bac
+	 */
+	private double[] nonLinearTransformation(double fbank[]) {
+		double f[] = new double[fbank.length];
+		final double FLOOR = -50;
+		for (int i = 0; i < fbank.length; i++) {
+			f[i] = Math.log(fbank[i]);
+			// check if ln() returns a value less than the floor
+			if (f[i] < FLOOR) {
+				f[i] = FLOOR;
+			}
+		}
+		return f;
+	}
+
+	private double centerFreq(int i) {
+		double melFLow, melFHigh;
+		melFLow = freqToMel(lowerFilterFreq);
+		melFHigh = freqToMel(upperFilterFreq);
+		double temp = melFLow + ((melFHigh - melFLow) / (numMelFilters + 1)) * i;
+		return inverseMel(temp);
+	}
+
+	private double inverseMel(double x) {
+		double temp = Math.pow(10, x / 2595) - 1;
+		return 700 * (temp);
+	}
+
+	protected double freqToMel(double freq) {
+		return 2595 * log10(1 + freq / 700);
+	}
+
+	private double log10(double value) {
+		return Math.log(value) / Math.log(10);
+	}
+}
+
+package PilotParams;
+
+import java.io.IOException;
+
+/**
+ * This sample creates a property file with parameters for your robot.
+ * The property file is used by all the samples that use DifferentialPilot.
+ */
+import lejos.util.PilotProps;
+
+/**
+ * Use this sample to set the parameters for DifferentialPilot. These values
+ * will then work with any sample that uses DifferentialPilot.
+ * 
+ * @author Lawrie Griffiths
+ *
+ */
+public class PilotParams {
+
+	public static void main(String[] args) throws IOException {
+		// Change this to match your robot
+		PilotProps p = new PilotProps();
+		p.setProperty(PilotProps.KEY_WHEELDIAMETER, "5.6");
+		p.setProperty(PilotProps.KEY_TRACKWIDTH, "16.0");
+		p.setProperty(PilotProps.KEY_LEFTMOTOR, "A");
+		p.setProperty(PilotProps.KEY_RIGHTMOTOR, "C");
+		p.setProperty(PilotProps.KEY_REVERSE, "true");
+		
+		p.storePersistentValues();
+	}
+}
+
